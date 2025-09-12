@@ -15,10 +15,22 @@
     - 预测结果：0(正常）或1(故障)。
 
 输入描述
-    - 第一行为训练总个数N，(2≤N≤100)。
+    - 第一行为训练总个数N，(2<=N<=100)。
     - 第二行起连续N行训练数据，每个训练数据包含：设备ID，写入次数，读取次数，平均写入延迟，平均读取延迟，设备使用年限，状态。
     - 第N+2行为预测数据总个数M，（1<=M<=10)
-    - 第N+3行起连续M行预测数据，每个预测数据包含：设备ID，写入次数，读取次数，平均写入延迟，平均读取延迟，设备使用年限，状态。
+    - 第N+3行起连续M行预测数据，每个预测数据包含：设备ID，写入次数，读取次数，平均写入延迟，平均读取延迟，设备使用年限。
 输出描述
     - 输出M行预测结果。
 '''
+
+N = int(input())
+
+train_datas = []
+for _ in range(N):
+    train_datas.append(list(map(float, input().split())))
+
+M = int(input())
+
+predict_datas = []
+for _ in range(M):
+    predict_datas.append(list(map(float, input().split())))
