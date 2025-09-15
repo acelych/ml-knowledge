@@ -818,3 +818,611 @@ $$X'_{n \times p} = U_{n \times n} \Sigma_{n \times p} V_{p \times p}^T$$
     计算每个主成分所解释的方差占总方差的比例 $\frac{\lambda_i}{\sum \lambda_j}$，然后看前 `k` 个主成分的累计方差贡献率是否达到一个阈值（例如95%或99%）。
 - **碎石图 (Scree Plot)**
     将排序后的特征值（方差）绘制成条形图。通常图形会有一个明显的“肘部”，即特征值从大到小急剧下降后变得平缓的拐点。这个拐点之后的主成分通常可以被忽略。
+
+## 6. 聚类算法
+
+### 6.1 什么是聚类分析？
+
+聚类 (Clustering) 是一种经典的**无监督学习**任务。
+
+* **核心目标**：将一个数据集中的样本划分为若干个不相交的子集，每个子集称为一个“簇” (Cluster)。聚类的目标是使得**同一个簇内的样本彼此相似**，而**不同簇的样本彼此不相似**。这正是中文里“物以类聚，人以群分”思想的体现。
+* **无监督特性**：与分类不同，聚类的数据没有预先定义的标签。算法需要自主地发现数据中潜在的结构和群组。因此，聚类的结果好坏通常没有绝对的标准，评估也更复杂。
+
+---
+
+### 6.2 万物皆有“距”：相似性的度量
+
+如何定义“相似”？这是聚类的根本前提。通常我们通过**距离 (Distance)** 或 **相似度 (Similarity)** 来衡量。距离越小，相似度越高。
+
+#### 6.2.1 对数值型数据 (Continuous Features)
+假设有两个n维样本点 $x = (x_1, ..., x_n)$ 和 $y = (y_1, ..., y_n)$：
+
+* **欧几里得距离 (Euclidean Distance, L2范数)**：空间中两点的直线距离，最常用。
+    $$
+    d_{euc}(x, y) = \sqrt{\sum_{i=1}^{n}(x_i - y_i)^2}
+    $$
+* **曼哈顿距离 (Manhattan Distance, L1范数)**：城市街区距离，即各坐标轴距离之和。对异常值没有欧氏距离敏感。
+    $$
+    d_{man}(x, y) = \sum_{i=1}^{n}|x_i - y_i|
+    $$
+* **余弦相似度 (Cosine Similarity)**：衡量两个向量方向的差异，与绝对大小无关。在文本分析等高维稀疏场景下尤其常用。相似度范围为[-1, 1]，通常转换为距离 `1 - similarity`。
+    $$
+    \text{sim}(x, y) = \cos(\theta) = \frac{x \cdot y}{\|x\| \|y\|}
+    $$
+
+#### 6.2.2 对类别型数据 (Categorical Features)
+
+* **杰卡德相似系数 (Jaccard Similarity)**：用于比较两个集合的相似性，定义为交集大小除以并集大小。
+    $$
+    J(A, B) = \frac{|A \cap B|}{|A \cup B|}
+    $$
+    对应的杰卡德距离为 $d_J = 1 - J(A, B)$。
+
+**注意**：在使用基于距离的算法前，通常需要对数据进行**标准化 (Standardization)**，以消除不同特征尺度（量纲）的影响。
+
+---
+
+### 6.3 “聚”得好不好：评估指标
+
+聚类效果的评估分为两种情况：
+
+#### 6.3.1 外部指标 (External Metrics) - 当存在真实标签时
+这通常用于学术研究或算法评估，通过比较聚类结果与真实类别的一致性来衡量。
+
+* **调整兰德系数 (Adjusted Rand Index, ARI)**：衡量两组数据划分的相似度，取值范围为[-1, 1]。值越大越好，接近0表示随机分配。
+* **标准化互信息 (Normalized Mutual Information, NMI)**：从信息论角度衡量划分的相似度，取值范围[0, 1]，值越大越好。
+
+#### 6.3.2 内部指标 (Internal Metrics) - 当不存在真实标签时
+这是实际应用中最常用的评估方法，它仅利用聚类结果和数据自身的信息。
+
+* **轮廓系数 (Silhouette Coefficient)**：衡量一个样本与其自身簇的紧密程度，以及与其他簇的分离程度。
+    * 对样本 $i$，计算它到同簇其他样本的平均距离 $a_i$，以及它到**最近的**其他簇所有样本的平均距离 $b_i$。
+    * 样本 $i$ 的轮廓系数为：$s_i = \frac{b_i - a_i}{\max(a_i, b_i)}$
+    * 全体样本的轮廓系数是所有 $s_i$ 的平均值。取值范围[-1, 1]，值越大越好。1表示完美聚类，0表示簇重叠，-1表示聚类错误。
+* **Calinski-Harabasz Index (CH分数)**：通过簇间离散度与簇内离散度的比值来评估，分数越高越好。
+* **Davies-Bouldin Index (DBI)**：计算任意两簇的簇内距离之和与簇心距离的比值，寻找最小的均值。DBI越小越好。
+
+---
+
+### 6.4 主流聚类算法家族
+
+#### 6.4.1 基于划分的聚类 (Partition-based Clustering)
+**核心思想**：试图将数据集划分为K个不相交的簇，并通过迭代优化某个标准（如最小化簇内误差平方和）来寻找最佳划分。
+
+##### K-Means (K-均值)
+* **算法流程**:
+    1.  **初始化**: 随机选择K个数据点作为初始质心 (Centroids)。(改进版K-Means++使用更智能的初始化方法)
+    2.  **分配 (Assignment)**: 计算每个数据点到K个质心的距离，并将其分配给最近的质心所在的簇。
+    3.  **更新 (Update)**: 重新计算每个簇的质心，即簇内所有数据点的均值。
+    4.  **迭代**: 重复步骤2和3，直到质心位置不再变化或变化很小，或者达到最大迭代次数。
+* **如何选择K值**:
+    * **肘部法则 (Elbow Method)**: 绘制不同K值对应的**簇内平方和 (WCSS)** 曲线，选择曲线斜率变化最明显的“肘部”对应的K值。
+    * **轮廓系数法**: 计算不同K值对应的平均轮廓系数，选择使得分最高的K值。
+* **优点**:
+    * 算法简单、快速，易于理解和实现。
+    * 对于处理大数据集，算法是相对可伸缩的。
+* **缺点**:
+    * **必须预先指定K值**。
+    * 对初始质心的选择敏感，可能陷入局部最优（K-Means++可缓解）。
+    * 对异常值和噪声敏感。
+    * 只能发现**球状**或凸形的簇，且假设簇的大小相当。
+
+#### 6.4.2 基于层次的聚类 (Hierarchical Clustering)
+**核心思想**：创建一套嵌套的聚类，最终形成一个树状的聚类结构，称为**树状图 (Dendrogram)**。用户可以根据需要在这个树的任意高度“横切一刀”，从而得到指定数量的簇。
+
+* **主要类型**:
+    * **凝聚型 (Agglomerative)**: 自底向上。开始时每个样本自成一簇，然后迭代地合并最相似的两簇，直到所有样本合并成一个簇。
+    * **分裂型 (Divisive)**: 自顶向下。开始时所有样本在一个簇，然后迭代地分裂最不相似的簇，直到每个样本自成一簇。
+* **算法流程**（以凝聚型为例）：
+    1.  **初始化**：将数据集中的每一个样本点都视为一个独立的簇。如果有个 $n$ 个样本，初始就有 $n$ 个簇。
+    2.  **计算初始距离**：计算每两个样本点之间的距离，形成一个距离矩阵。
+    3.  **迭代合并**:
+        a.  从距离矩阵中找到距离最近的两个簇（记为簇 $C_i$ 和 $C_j$）。
+        b.  将这两个簇合并成一个新的簇 $C_{new} = C_i \cup C_j$。
+        c.  **更新距离矩阵**：从矩阵中删除原来 $C_i$ 和 $C_j$ 的行和列，并添加新簇 $C_{new}$ 的行和列。新簇与其他簇 $C_k$ 的距离需要根据**链接准则 (Linkage Criteria)** 来计算。
+        d.  重复步骤 a, b, c，直到所有样本点被合并到同一个簇中。
+* **簇间距离/链接准则 (Linkage Criteria)**:
+    * **Single-linkage**: 两簇间**最近**样本的距离。
+    * **Complete-linkage**: 两簇间**最远**样本的距离。
+    * **Average-linkage**: 两簇间所有样本对距离的**平均值**。
+    * **Ward's method**: 合并后使得总簇内平方和增量最小的两簇。
+* **优点**:
+    * **无需预先指定K值**，可以根据树状图决定最终的簇数量。
+    * 可以发现任意形状的簇（取决于链接准则）。
+    * 提供了丰富的层次结构信息。
+* **缺点**:
+    * 计算复杂度高（通常为 $O(n^2\log n)$ 或更高），不适合大数据集。
+    * 合并或分裂一旦做出，就无法撤销，可能导致次优解。
+
+#### 6.4.3 基于密度的聚类 (Density-based Clustering)
+**核心思想**：将簇定义为被低密度区域分隔开的稠密样本区域。
+
+##### DBSCAN (Density-Based Spatial Clustering of Applications with Noise)
+* **核心概念**:
+    * `eps` (ε): 定义一个点的邻域半径。
+    * `min_samples`: 成为核心点所需的邻域内最小样本数（包括自身）。
+    * **核心点 (Core Point)**: 在其 `eps` 邻域内至少有 `min_samples` 个点的样本。
+    * **边界点 (Border Point)**: 在某个核心点的 `eps` 邻域内，但自身不是核心点的样本。
+    * **噪声点 (Noise Point)**: 既非核心点也非边界点的样本。
+* **算法流程**:
+    1.  从任意未访问的样本点P开始。
+    2.  检查P是否为核心点。
+    3.  **如果是核心点**: 创建一个新簇，并将P及其邻域内所有点（及这些点可密度直达的所有点）都加入该簇。
+    4.  **如果不是核心点**: 暂时标记为噪声点（后续可能被其他核心点收编为边界点）。
+    5.  重复以上过程，直到所有点都被访问。
+* **优点**:
+    * **无需预先指定K值**。
+    * 能够发现**任意形状**的簇。
+    * 对**异常值和噪声不敏感**，能将它们识别出来。
+* **缺点**:
+    * 对于密度不均匀的数据集效果不佳。
+    * 对于高维数据，密度定义困难（维度灾难）。
+    * 对参数 `eps` 和 `min_samples` 的选择敏感。
+
+#### 6.4.4 谱聚类 (Spectral Clustering)
+
+谱聚类是一种基于**图论**的聚类方法。它的核心思想不是直接在原始空间中对点进行分组，而是将聚类问题转化为图的分割问题，寻找最优的图切割方案。
+
+* **核心概念**:
+
+    想象一下，如果将所有数据点看作社交网络中的人，点与点之间的相似度看作他们之间的“友谊强度”。谱聚类的任务就是找到一种分群方式，使得“群组内部的朋友关系很密切”，而“群组之间的朋友关系很疏远”。
+
+    它通过一种**“降维”**的方式，将数据映射到一个新的特征空间（谱空间），在这个新空间里，原本难以分离的簇变得更容易被K-Means等简单聚类算法分开了。
+
+* **关键概念**
+
+    * **相似性图 (Similarity Graph)**: 算法的第一步是将数据构建成一个图 $G=(V, E)$。
+        * 顶点 $V$：每个数据点是一个顶点。
+        * 边 $E$：连接两个顶点的边，其权重 $w_{ij}$ 表示点 $x_i$ 和 $x_j$ 的相似度。常用的相似度函数是高斯核函数（RBF核）：
+            $$
+            w_{ij} = \exp\left(-\frac{\|x_i - x_j\|^2}{2\sigma^2}\right)
+            $$
+    * **邻接矩阵 (Adjacency Matrix, A)**: 图的权重矩阵， $A_{ij} = w_{ij}$。
+    * **度矩阵 (Degree Matrix, D)**: 一个对角矩阵，对角线上的元素 $D_{ii}$ 是顶点 $i$ 的所有边的权重之和（即邻接矩阵第 $i$ 行的和）。
+    * **拉普拉斯矩阵 (Laplacian Matrix, L)**: 谱聚类的核心。它反映了图的结构信息。最基本的形式是：
+        $$
+        L = D - A
+        $$
+        （也存在标准化的拉普拉斯矩阵，如 $L_{sym} = D^{-1/2}LD^{-1/2}$，通常效果更好）
+
+* **算法流程**
+
+    1.  **构建图**: 根据给定的数据集，选择一种方式构建相似性图，并计算其邻接矩阵 $A$ 和度矩阵 $D$。
+    2.  **计算拉普拉斯矩阵**: $L = D - A$。
+    3.  **计算特征值和特征向量**: 对拉普拉斯矩阵 $L$进行特征分解，求出其最小的 $k$ 个特征值及其对应的特征向量。
+    4.  **构建新特征空间**: 将这 $k$ 个特征向量按列排成一个 $n \times k$ 的矩阵 $U$（$n$是样本数）。这个矩阵的每一行就是一个原始样本点在新的 $k$ 维空间中的表示。
+    5.  **聚类**: 对这个新的 $n \times k$ 的数据矩阵 $U$，使用**K-Means**等简单的聚类算法，将其划分为 $k$ 个簇。最终的结果就是原始数据的聚类结果。
+
+* **优点**:
+    * **能够识别非凸形状的簇** (如月牙形、同心圆)，这是它相比K-Means最大的优势。
+    * 只需要数据间的相似性矩阵，因此适用范围很广。
+    * 对数据分布没有太多假设。
+
+* **缺点**:
+    * **计算开销大**：特征分解的计算复杂度通常为 $O(n^3)$，不适合非常大规模的数据集。
+    * **需要预先指定簇数 K**。
+    * 对相似性图的构建方式非常敏感，不同的图构建方法（如k-NN图、全连接图）和参数（如高斯核的 $\sigma$）对结果影响很大。
+
+### 6.5 算法对比与选择
+
+| 特性 | K-Means | 层次聚类 (凝聚型) | DBSCAN | 谱聚类 |
+| :--- | :--- | :--- | :--- | :--- |
+| **核心思想** | 最小化簇内平方和 | 合并最相似的簇 | 寻找密度相连的区域 | 降维 |
+| **簇形状** | 球状/凸形 | 任意形状 | 任意形状 | 任意形状 |
+| **需要指定K?** | **是** | 否 (但需指定切割高度) | 否 | 是 |
+| **异常值处理** | 敏感，会将其分到某个簇 | 敏感，可能形成单独的小簇 | **鲁棒**，识别为噪声 | 敏感，会将其分到某个簇 |
+| **计算复杂度** | 较快, $O(n \cdot K \cdot I \cdot d)$ | 较慢, $O(n^2\log n)$ | 中等, $O(n\log n)$ 或 $O(n^2)$ | 昂贵，$O(n^3)$ |
+| **适用场景** | 簇为凸形且大小相似的大数据集 | 需要层次关系、数据集不大 | 簇形状不规则、含噪声的数据集 | 簇形状复杂、非凸，数据集不大 |
+
+---
+
+### 6.6 实践：Scikit-learn代码示例
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.datasets import make_moons, make_blobs
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.metrics import silhouette_score, adjusted_rand_score
+
+# --- 1. 生成和准备数据 ---
+# 数据集1: 月亮形状，适合DBSCAN
+X_moons, y_moons = make_moons(n_samples=200, noise=0.05, random_state=0)
+X_moons = StandardScaler().fit_transform(X_moons)
+
+# 数据集2: 球状，适合K-Means
+X_blobs, y_blobs = make_blobs(n_samples=200, centers=3, n_features=2, random_state=0)
+X_blobs = StandardScaler().fit_transform(X_blobs)
+
+datasets = [(X_moons, y_moons), (X_blobs, y_blobs)]
+dataset_names = ['Moons', 'Blobs']
+
+# --- 2. 初始化聚类算法 ---
+kmeans = KMeans(n_clusters=2, random_state=0, n_init='auto') # Moons数据只有2个簇
+dbscan = DBSCAN(eps=0.3, min_samples=5)
+agglomerative = AgglomerativeClustering(n_clusters=2, linkage='ward') # Moons数据只有2个簇
+
+clfs = [kmeans, dbscan, agglomerative]
+clf_names = ['K-Means', 'DBSCAN', 'Hierarchical']
+
+# --- 3. 运行和评估 ---
+plt.figure(figsize=(12, 6))
+plot_num = 1
+
+for i, (X, y) in enumerate(datasets):
+    for name, clf in zip(clf_names, clfs):
+        ax = plt.subplot(len(datasets), len(clfs), plot_num)
+        
+        # 适配blobs数据集的簇数
+        if isinstance(clf, KMeans):
+            clf.n_clusters = len(np.unique(y))
+        if isinstance(clf, AgglomerativeClustering):
+            clf.n_clusters = len(np.unique(y))
+            
+        # 拟合并预测
+        clf.fit(X)
+        y_pred = clf.labels_
+
+        # 评估
+        silhouette = silhouette_score(X, y_pred)
+        ari = adjusted_rand_score(y, y_pred)
+
+        # 绘图
+        colors = np.array(['#377eb8', '#ff7f00', '#4daf4a', '#f781bf', '#a65628', '#984ea3'])
+        # 噪声点为黑色
+        colors = np.append(colors, ['#000000'])
+        ax.scatter(X[:, 0], X[:, 1], s=10, color=colors[y_pred])
+
+        ax.set_title(f"{name} on {dataset_names[i]}", fontsize=9)
+        ax.set_xticks(())
+        ax.set_yticks(())
+        ax.text(.99, .01, f'Sil: {silhouette:.2f}\nARI: {ari:.2f}',
+                transform=ax.transAxes, size=9, horizontalalignment='right')
+        plot_num += 1
+
+plt.tight_layout()
+plt.show()
+```
+
+## 7. 贝叶斯网络
+
+### 7.1 基石：概率论的核心推论
+
+贝叶斯网络完全建立在概率论的数学框架之上。理解以下几个核心概念是理解贝叶斯网络的前提。
+
+#### 7.1.1 条件概率 (Conditional Probability)
+一个事件A在另一个事件B已经发生的条件下发生的概率，记为 `P(A|B)`。
+$$
+P(A|B) = \frac{P(A, B)}{P(B)}
+$$
+其中 `P(A, B)` 是A和B的**联合概率 (Joint Probability)**，表示A和B同时发生的概率。
+
+#### 7.1.2 乘法法则 (Product Rule)
+由条件概率公式变形得到，用于计算联合概率：
+$$
+P(A, B) = P(A|B)P(B) = P(B|A)P(A)
+$$
+
+#### 7.1.3 链式法则 (Chain Rule)
+乘法法则的推广，用于计算多个事件的联合概率。对于n个事件 $X_1, X_2, ..., X_n$：
+$$
+\begin{aligned}
+P(X_1, ..., X_n) &= P(X_1)P(X_2|X_1)P(X_3|X_1, X_2)...P(X_n|X_1, ..., X_{n-1}) \\
+&= \prod_{i=1}^{n} P(X_i | X_1, ..., X_{i-1})
+\end{aligned}
+$$
+**核心痛点**：链式法则的计算复杂度是指数级的。当变量增多时，`P(X_n|X_1, ..., X_{n-1})` 这样的条件概率表会变得异常庞大，难以统计和存储。
+
+#### 7.1.4 贝叶斯定理 (Bayes' Theorem)
+结合乘法法则 `P(A, B)` 的两种写法，可以推导出贝叶斯定理，它是在已知结果（B）的情况下，反推原因（A）的概率。
+$$
+P(A|B) = \frac{P(B|A)P(A)}{P(B)}
+$$
+* `P(A|B)`: **后验概率 (Posterior)**，结果B发生后，我们对原因A的信念更新。
+* `P(B|A)`: **似然 (Likelihood)**，在原因A发生的条件下，结果B发生的概率。
+* `P(A)`: **先验概率 (Prior)**，在没有任何证据前，我们对原因A的原始信念。
+* `P(B)`: **证据 (Evidence)**，结果B发生的概率，通常通过全概率公式计算以作归一化。
+
+---
+
+### 7.2 核心定义：什么是贝叶斯网络？
+
+贝叶斯网络 (Bayesian Network) 是一个**有向无环图 (Directed Acyclic Graph, DAG)**，它通过一种巧妙的方式，利用**条件独立性假设**来简化联合概率分布的计算。
+
+它由两部分组成：
+
+1.  **结构 (Structure)**: 一个DAG，其中：
+    * **节点 (Nodes)**：代表随机变量 (Random Variables)。
+    * **有向边 (Directed Edges)**：代表变量间的直接因果关系或依赖关系（从“父节点”指向“子节点”）。**无环**意味着不存在“A->B->C->A”这样的循环。
+
+2.  **参数 (Parameters)**: 一系列**条件概率表 (Conditional Probability Tables, CPTs)**。
+    * 每个节点 `X_i` 都关联一个CPT，这个CPT描述了该节点在其**父节点** `Parents(X_i)` 取不同值的组合下，自身的概率分布，即 `P(X_i | Parents(X_i))`。
+    * 没有父节点的根节点，其CPT就是它的先验概率分布 `P(X_i)`。
+
+**贝叶斯网络的核心贡献**：
+它基于图的结构，假设**每个节点都与其非后代的节点条件独立于其父节点**。这个假设极大地简化了链式法则。
+
+对于一个贝叶斯网络，n个变量的联合概率分布可以从复杂的链式法则：
+$$
+P(X_1, ..., X_n) = \prod_{i=1}^{n} P(X_i | X_1, ..., X_{i-1})
+$$
+简化为：
+$$
+P(X_1, ..., X_n) = \prod_{i=1}^{n} P(X_i | \text{Parents}(X_i))
+$$
+这个公式是贝叶斯网络的**灵魂**。它意味着我们不再需要存储指数级大小的条件概率表，只需要为每个节点存储一个与其父节点相关的、规模小得多的CPT。
+
+---
+
+### 7.3 灵魂：条件独立性与D-分离
+
+如何从图结构中直接判断变量之间是否存在条件独立性？答案是**D-分离 (D-Separation)** 准则。
+
+要判断变量集合X和Y是否在给定证据集合Z的条件下是独立的，我们需要检查X和Y之间在图上的**所有路径**。如果所有路径都被Z“阻断”(blocked)，那么X和Y就是条件独立的。
+
+路径被阻断有三种情况：
+
+1.  **串行连接 (Chain)**: `A → M → B`
+    * 如果中间节点 `M` **被观测** (M在证据集Z中)，则路径被阻断。信息流在M处被截断。
+    * 如果 `M` 未被观测，则路径是通的。
+
+2.  **分叉连接 (Fork)**: `A ← M → B`
+    * 如果共同的原因 `M` **被观测**，则路径被阻断。
+    * 如果 `M` 未被观测，则路径是通的。
+
+3.  **V型结构 (Collider / 对撞)**: `A → M ← B`
+    * **默认情况**：如果对撞节点 `M` **及其任何后代都未被观测**，则路径**默认就是阻断的**。A和B的独立性被M保证。
+    * **特殊情况**：如果 `M` **或者M的任何一个后代被观测**，则路径反而会**被打通**！这被称为“解释得通”效应（Explaining Away）。例如，地湿（M）的原因可能是下雨（A）或洒水（B）。如果我已经观测到地湿，那么得知下雨了，就会降低我对洒水车来过的信念。下雨和洒水这两个独立原因因为共同的结果产生了关联。
+
+**总结**：只要 X 和 Y 之间的**每一条路径**都至少满足以上三种“阻断”情况中的一种，我们就称 X 和 Y 被 Z **D-分离**，即 `X ⊥ Y | Z`。
+
+---
+
+### 7.4 应用：贝叶斯网络能做什么？(推理任务)
+
+有了网络之后，最核心的应用就是进行**概率推理 (Probabilistic Inference)**，即在获得部分信息（证据）后，更新对其他未知变量的信念。
+
+1.  **概率查询 (Probability Queries)**: 给定一组证据变量 `E` 的观测值 `e`，计算一组查询变量 `Q` 的后验概率 `P(Q|E=e)`。这是最常见的任务。
+    * 例如：在“草地湿了”(`E=e`)的条件下，“下雨了”(`Q`)的概率是多少？
+
+2.  **最大后验概率 (MAP) 查询**: 也称为最可能的解释 (Most Probable Explanation, MPE)。给定证据 `E=e`，找到一组未观测变量 `W` 的最可能的状态组合 `w`。
+    * `argmax_w P(W=w | E=e)`
+    * 例如：已知“警报响了”，最可能发生的情况是“发生了地震但没有发生盗窃”还是“没有发生地震但发生了盗窃”？
+
+---
+
+### 7.5 算法：如何求解？(推理与学习)
+
+#### 7.5.1 推理算法 (Inference Algorithms)
+* **精确推理 (Exact Inference)**:
+    * **变量消除法 (Variable Elimination)**: 通过动态规划的思想，利用乘法分配律，依次将非查询、非证据的变量通过求和（离散）或积分（连续）的方式“消除”掉，从而避免重复计算。对于稀疏连接的树状网络很高效，但对于复杂网络仍是NP-hard问题。
+* **近似推理 (Approximate Inference)**: 当精确推理不可行时使用。
+    * **随机抽样法**: 通过从网络中进行大量随机抽样来近似计算概率。代表算法有**MCMC (马尔可夫链蒙特卡洛)** 中的 **Gibbs抽样**。
+    * **变分推断 (Variational Inference)**: 将计算后验概率的积分问题，转化为一个优化问题，寻找一个简单的、易于处理的分布 `q` 来近似真实的后验分布 `p`。
+
+#### 7.5.2 学习算法 (Learning Algorithms)
+如何从数据中构建贝叶斯网络？
+
+* **参数学习 (Parameter Learning)**: **网络结构已知**，从数据中学习CPTs。
+    * 数据完整时：本质上就是**最大似然估计 (MLE)**，即统计数据中的频率作为概率。
+    * 数据有缺失时：需要使用 **EM (Expectation-Maximization) 算法** 或梯度下降等方法。
+* **结构学习 (Structure Learning)**: **网络结构未知**，这是更困难的问题。
+    * **基于分数的搜索**: 定义一个评分函数（如BIC、AIC分数），用于衡量网络结构与数据的匹配程度，然后在所有可能的图结构空间中搜索分数最高的结构。
+    * **基于约束的方法**: 通过在数据上进行大量的条件独立性检验（如卡方检验），找到所有满足D-分离关系的变量对，然后构建出符合这些约束的图结构。
+
+---
+
+### 7.6 实战：手撕代码示例
+
+我们用经典的“下雨-洒水-草地湿”例子来实现一个简单的贝叶斯网络，并进行推理。
+
+**场景描述**:
+* 草地湿 (G) 的原因可能是下雨 (R) 或洒水车工作 (S)。
+* 下雨 (R) 会影响洒水车是否工作 (S)，假设天下雨时，洒水车有较大概率不工作。
+* 这是一个V型结构: `R → S`, `R → G`, `S → G`。为了简化，我们用一个更经典的结构：`Cloudy -> Sprinkler`, `Cloudy -> Rain`, `Sprinkler -> GrassWet`, `Rain -> GrassWet`。这里有两个Fork和一个Collider。
+
+**简化版问题：下雨(Rain)和洒水(Sprinkler)是独立的，但它们都会导致草地湿(GrassWet)。这是一个Collider结构。**
+* `Rain → GrassWet`
+* `Sprinkler → GrassWet`
+
+**Python 实现**:
+
+```python
+import numpy as np
+
+# 定义变量状态 (True/False)
+T, F = True, False
+
+# 1. 定义网络结构和CPTs
+# 使用字典来表示CPTs
+# P(Rain)
+p_rain = {T: 0.2, F: 0.8}
+
+# P(Sprinkler)
+p_sprinkler = {T: 0.1, F: 0.9}
+
+# P(GrassWet | Rain, Sprinkler)
+p_grass_wet = {
+    # Rain=T, Sprinkler=T
+    (T, T): {T: 0.99, F: 0.01},
+    # Rain=T, Sprinkler=F
+    (T, F): {T: 0.8, F: 0.2},
+    # Rain=F, Sprinkler=T
+    (F, T): {T: 0.9, F: 0.1},
+    # Rain=F, Sprinkler=F
+    (F, F): {T: 0.0, F: 1.0},
+}
+
+# 2. 实现联合概率计算函数
+# P(R, S, G) = P(R) * P(S) * P(G | R, S)
+# 注意：这里我们假设R和S是独立的，符合Collider结构
+def joint_probability(r, s, g):
+    """计算给定状态组合的联合概率"""
+    p_r = p_rain[r]
+    p_s = p_sprinkler[s]
+    p_g = p_grass_wet[(r, s)][g]
+    return p_r * p_s * p_g
+
+# 3. 进行推理：计算 P(Rain=T | GrassWet=T)
+# 根据贝叶斯公式: P(R=T|G=T) = P(R=T, G=T) / P(G=T)
+
+# 3.1 计算分子 P(R=T, G=T)
+# 需要对Sprinkler变量进行边缘化 (sum out)
+# P(R=T, G=T) = P(R=T, S=T, G=T) + P(R=T, S=F, G=T)
+p_r_true_g_true = joint_probability(T, T, T) + joint_probability(T, F, T)
+
+print(f"P(Rain=T, GrassWet=T) = {p_r_true_g_true:.4f}")
+
+# 3.2 计算分母 P(G=T)
+# 需要对Rain和Sprinkler两个变量进行边缘化
+# P(G=T) = sum_{r,s} P(R=r, S=s, G=T)
+p_g_true = 0.0
+for r_val in [T, F]:
+    for s_val in [T, F]:
+        p_g_true += joint_probability(r_val, s_val, T)
+
+print(f"P(GrassWet=T) = {p_g_true:.4f}")
+
+
+# 3.3 计算最终结果
+p_r_true_given_g_true = p_r_true_g_true / p_g_true
+
+print(f"P(Rain=T | GrassWet=T) = {p_r_true_given_g_true:.4f}")
+
+# 探索"解释得通"效应
+# 计算在知道草地湿的情况下，洒水车也开了的条件下，下雨的概率
+# P(Rain=T | GrassWet=T, Sprinkler=T) = P(R=T, G=T, S=T) / P(G=T, S=T)
+
+# 分子
+p_r_t_g_t_s_t = joint_probability(T, T, T)
+
+# 分母 P(G=T, S=T) = P(R=T, G=T, S=T) + P(R=F, G=T, S=T)
+p_g_t_s_t = joint_probability(T, T, T) + joint_probability(F, T, T)
+
+p_r_t_given_g_t_s_t = p_r_t_g_t_s_t / p_g_t_s_t
+
+print("--- Explaining Away Effect ---")
+print(f"Original belief in rain P(Rain=T): {p_rain[T]}")
+print(f"After seeing grass is wet P(Rain=T | GrassWet=T): {p_r_true_given_g_true:.4f}")
+print(f"After also knowing sprinkler is on P(Rain=T | GrassWet=T, Sprinkler=T): {p_r_t_given_g_t_s_t:.4f}")
+# 观察到概率下降，因为洒水车解释了草地湿的原因，降低了对下雨这个原因的信念。
+```
+
+## NLP/大模型
+
+### .1 文本到向量：模型的“预处理器”
+
+在CV中，我们直接处理像素矩阵；在NLP中，原始文本需要经过“分词”和“嵌入”两个关键步骤才能输入到Transformer模型中。
+
+#### .1.1 文本分词 (Tokenization) - 定义模型的“单词”
+
+这是将文本字符串转换为Token序列的过程。选择不同的分词策略，会直接影响模型的性能和效率。
+
+* **词级分词** (Word-Level Tokenization)
+
+    这是最符合人类直觉的分词方式，将完整的“单词”作为最小单元。
+
+    * **核心思想**：语言的基本单位是词。
+    * **具体方法**：
+        * **空格分词 (Whitespace Tokenizer)**：这是最简单粗暴的方法。直接使用空格、换行符、制表符等空白字符作为分隔符来切分句子。例如，`"I am a student."` 会被切分为 `["I", "am", "a", "student."]`。这种方法无法处理标点符号，并且不适用于中文、日文等天然没有空格的语言。
+        * **基于正则表达式的分词 (Regex-based Tokenizer)**：通过一个正则表达式来定义“什么是一个词”。例如，可以用 `\w+` 来匹配所有字母数字组合。这比简单的空格分词更灵活，可以更好地处理标点和特殊符号，但规则需要人为精心设计。
+        * **基于词典的分词 (Dictionary-based Tokenization)**：在中文等场景下常见。通过维护一个巨大的词典，采用最大匹配等算法来切分句子。例如，“北京天安门”通过正向最大匹配和词典 `{"北京", "天安门"}` 可以被正确切分。
+        
+* **字符级分词** (Character-Level Tokenization)
+
+    这是最细粒度的分词方式，将每个“字符”作为最小单元。
+
+    * **核心思想**：语言的最小单位是字符。
+    * **具体方法**：直接将字符串打散成字符列表。例如，`"hello"` 会被切分为 `['h', 'e', 'l', 'l', 'o']`。
+    * **应用场景**：通常用于特殊任务，如拼写纠错，或者在处理非常罕见的词汇和噪声文本时作为一种兜底策略。在主流NLP任务中已不常用。
+
+* **子词分词 (Subword Tokenization)**
+    
+    当前绝对的主流。
+    
+    * **核心思想**：在“完整单词”（Word-level）和“单个字符”（Character-level）之间取一个平衡。常见词作为一个整体，罕见词拆分为多个有意义的子词片段。
+    * **优点**：
+        1.  **无OOV (Out-of-Vocabulary)问题**：任何新词都可以被拆解成已知的子词单元。
+        2.  **词表大小可控**：可以预设一个合理的词汇表规模（例如5万）。
+        3.  **处理词形变化**：`running` 和 `run` 可以共享子词 `run`，模型能更好地学习它们的关系。
+    * **主流算法**：
+        * **BPE (Byte Pair Encoding)**：GPT系列使用。通过不断合并最高频的相邻Token对来构建词表。
+        * **WordPiece**：BERT系列使用。与BPE类似，但合并的标准是最大化语言模型的“似然概率”。
+        * **Unigram**：T5/XLNet使用。从一个非常大的词汇表开始，逐步剔除对整体损失影响最小的子词，直到达到目标大小。
+
+#### .1.2 词嵌入 (Embeddings) - 将Token映射到高维空间
+
+一旦文本被分词，每个Token就需要被转换成一个固定维度的向量。
+
+* **经典静态嵌入**：
+    * **Word2Vec / GloVe**：这些是“静态”的，即一个词（如`bank`）在任何上下文中的向量表示都是固定的。它们是通过在大型语料库上进行预训练得到的。现代模型已经很少直接使用它们了。
+* **现代动态/上下文嵌入**：
+    * **Transformer的输入层**：Transformer模型自身就包含一个Embedding层。这个层在训练开始时随机初始化，并在模型训练过程中端到端地学习。
+    * **核心区别**：同一个词 `bank` 在 "river bank" 和 "investment bank" 这两个不同句子中，经过Transformer的多层处理后，其最终的向量表示是**完全不同**的。这解决了“一词多义”问题，是现代NLP模型性能飞跃的关键。
+
+### .2 Transformer架构的“三种形态”
+
+虽然都使用Transformer Block，但根据Block的组合方式，形成了三种主流架构，适用于不同类型的任务。
+
+#### .2.1 Encoder-Only 架构 (仅编码器) - 擅长“理解”
+
+* **代表模型**：**BERT**, RoBERTa
+* **结构特点**：堆叠Transformer的Encoder层。其核心是**双向自注意力 (Bi-directional Self-Attention)**，即在处理一个Token时，它可以同时“看到”其左边和右边的所有上下文。
+* **适用任务**：需要深度理解整个句子上下文的任务。
+    * **文本分类**：情感分析、新闻分类。
+    * **命名实体识别 (NER)**：找出文本中的人名、地名。
+    * **句子关系判断**：判断两个句子是矛盾、蕴含还是中立。
+
+#### .2.2 Decoder-Only 架构 (仅解码器) - 擅长“生成”
+
+* **代表模型**：**GPT系列** (GPT-3, ChatGPT), LLaMA
+* **结构特点**：堆叠Transformer的Decoder层。其核心是**单向/因果自注意力 (Causal/Masked Self-Attention)**，即在预测第 `i` 个Token时，它**只能**看到它前面的 `i-1` 个Token，不能看到未来的信息。
+* **适用任务**：所有需要“依次生成”文本的任务。
+    * **文本生成**：写文章、写代码。
+    * **对话系统**：聊天机器人。
+    * **文本补全**。
+
+#### .2.3 Encoder-Decoder 架构 - 擅长“转换”
+
+* **代表模型**：**T5**, BART, 原始的Transformer论文模型
+* **结构特点**：一个Encoder处理输入序列，一个Decoder生成输出序列。Encoder和Decoder之间通过**交叉注意力 (Cross-Attention)**机制连接，Decoder在生成时会关注Encoder的输出。
+* **适用任务**：输入和输出序列结构不同或语言不同的序列到序列（Seq2Seq）任务。
+    * **机器翻译**：将德语翻译成英语。
+    * **文本摘要**：输入一篇长文章，输出一个短摘要。
+    * **问答系统**。
+
+### .3 模型的“修炼内功”：训练范式
+
+#### .3.1 预训练目标 (Pre-training Objectives)
+
+模型如何在海量的无标签数据上学习？答案是“自监督学习”，即从数据自身创造标签。
+
+* **BERT (Encoder) 的目标**：
+    * **Masked Language Model (MLM)**：随机遮盖（Mask）掉输入句子中15%的Token，然后让模型去预测这些被遮盖的Token是什么。这迫使模型去学习双向的语境信息。
+    * **Next Sentence Prediction (NSP)**：给模型两个句子A和B，让它判断B是不是A的真实下一句。这个目标后来被证明效果不大，在RoBERTa等后续模型中被放弃。
+* **GPT (Decoder) 的目标**：
+    * **Causal Language Model (CLM)**：非常简单直接，就是预测下一个词（Next Token Prediction）。给定一个句子的前 `n` 个词，预测第 `n+1` 个词。
+
+#### .3.2 预训练与微调 (Pre-training & Fine-tuning)
+
+这是BERT时代确立的经典范式，与CV领域完全一致。
+
+1.  **预训练**：在通用、海量的文本数据上（如维基百科、书籍），使用MLM或CLM等自监督目标进行训练，让模型学习通用的语言知识。这个过程成本极高。
+2.  **微调**：针对特定的下游任务（如情感分类），在小规模的、有标签的数据集上继续训练模型。通常只训练很少的轮次，调整模型的权重以适应特定任务。
+
+#### .3.3 新兴的交互/训练范式
+
+随着模型规模达到千亿级别，新的使用和训练方式变得流行。
+
+* **Prompting (提示)**：不再微调模型参数，而是通过设计精巧的输入文本（Prompt）来“引导”或“激发”大模型直接完成任务。
+    * **Zero-shot**：不给任何示例，直接下达指令。
+    * **Few-shot**：在指令中给出几个示例，让模型依葫芦画瓢。
+* **指令微调 (Instruction Tuning)**：收集大量“指令-回答”格式的数据对，对预训练好的大模型进行微调。这使得模型能更好地理解和遵循人类的指令，是ChatGPT类应用的关键技术。
+* **RLHF (Reinforcement Learning from Human Feedback)**：人类反馈的强化学习。通过人类对模型生成的多个答案进行偏好排序，训练一个“奖励模型”，然后用强化学习算法根据这个奖励模型来进一步优化语言模型，使其输出更符合人类的期望（更有用、更无害、更诚实）。这是“对齐”（Alignment）技术的关键。
+
+### .4 核心挑战与前沿方向
+
+* **幻觉 (Hallucination)**：模型会“一本正经地胡说八道”，捏造事实、来源和数据。
+* **对齐 (Alignment)**：如何让模型的价值观和行为与人类的价值观对齐，确保其安全、可靠和公平。
+* **效率 (Efficiency)**：训练和推理的计算成本和能源消耗巨大。模型压缩（量化、剪枝、蒸馏）和高效推理是研究热点。
+* **多模态 (Multi-modality)**：将文本、图像、声音等多种信息融合到单一模型中，是当前的一大趋势（例如CLIP, GPT-4V）。作为CV方向的同学，这是你的优势切入点。
